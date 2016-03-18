@@ -119,6 +119,9 @@ class ConfigTemplater(object):
       mode http
     ''')
 
+    HAPROXY_HTTP_FRONTEND_FOOTER = dedent('''
+    ''')
+
     HAPROXY_HTTP_FRONTEND_APPID_HEAD = dedent('''
     frontend marathon_http_appid_in
       bind *:9091
@@ -241,6 +244,7 @@ class ConfigTemplater(object):
         variables = [
             'HAPROXY_HEAD',
             'HAPROXY_HTTP_FRONTEND_HEAD',
+            'HAPROXY_HTTP_FRONTEND_FOOTER',
             'HAPROXY_HTTP_FRONTEND_APPID_HEAD',
             'HAPROXY_HTTPS_FRONTEND_HEAD',
             'HAPROXY_FRONTEND_HEAD',
@@ -287,6 +291,10 @@ class ConfigTemplater(object):
     @property
     def haproxy_http_frontend_head(self):
         return self.HAPROXY_HTTP_FRONTEND_HEAD
+
+    @property
+    def haproxy_http_frontend_footer(self):
+        return self.HAPROXY_HTTP_FRONTEND_FOOTER
 
     @property
     def haproxy_http_frontend_appid_head(self):
@@ -877,6 +885,9 @@ def config(apps, groups, bind_http_https, ssl_certs, templater):
                 logger.warning("Could not resolve ip for host %s, "
                                "ignoring this backend",
                                backendServer.host)
+
+    if bind_http_https:
+        http_frontends += templater.haproxy_http_frontend_footer
 
     if bind_http_https:
         config += http_frontends
