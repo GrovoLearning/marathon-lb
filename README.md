@@ -33,7 +33,8 @@ All applications are also exposed on port 9091, using the `X-Marathon-App-Id`
 HTTP header. See the documentation for `HAPROXY_HTTP_FRONTEND_APPID_HEAD` in
 the [templates section](#templates)
 
-You can access the HAProxy statistics via `:9090/haproxy?stats`
+You can access the HAProxy statistics via `:9090/haproxy?stats`, and you can
+retrieve the current HAProxy config from the `:9090/_haproxy_getconfig` endpoint.
 
 ## Deployment
 The package is currently available [from the multiverse](https://github.com/mesosphere/multiverse).
@@ -194,6 +195,10 @@ The full list of labels which can be specified are:
     Redirect HTTP traffic to HTTPS. Requires at least a VHost be set.
     Ex: HAPROXY_0_REDIRECT_TO_HTTPS = true
 
+  HAPROXY_{n}_USE_HSTS
+    Enable the HSTS response header for HTTP clients which support it.
+    Ex: HAPROXY_0_USE_HSTS = true
+
   HAPROXY_{n}_SSL_CERT
     Enable the given SSL certificate for TLS/SSL traffic.
     Ex: HAPROXY_0_SSL_CERT = '/etc/ssl/certs/marathon.mesosphere.com'
@@ -276,11 +281,15 @@ own templates to the Docker image, or provide them at startup.
 
   HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS
     This template is used with backends where the
-    HAPROXY_{n}_REDIRECT_TO_HTTPS label is defined.
+    HAPROXY_{n}_REDIRECT_TO_HTTPS label is set to true.
 
   HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS_WITH_PATH
     Same as HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS,
     but includes a path.
+
+  HAPROXY_BACKEND_HSTS_OPTIONS
+    This template is used for the backend where the
+    HAPROXY_{n}_USE_HSTS label is set to true.
 
   HAPROXY_BACKEND_HTTP_OPTIONS
     Sets HTTP headers, for example X-Forwarded-For and X-Forwarded-Proto.
@@ -477,11 +486,12 @@ The deployment method is described [in this Marathon document](https://mesospher
 - Only use 1 service port: multiple ports are not yet implemented
 - Use the provided `bluegreen_deploy.py` script to orchestrate the deploy: the script will make API calls to Marathon, and use the HAProxy stats endpoint to gracefully terminate instances
 - The marathon-lb container must be run in privileged mode (to execute `iptables` commands) due to the issues outlined in the excellent blog post by the [Yelp engineering team found here](http://engineeringblog.yelp.com/2015/04/true-zero-downtime-haproxy-reloads.html)
+- If you have long-lived TCP connections using the same HAProxy instances, it may cause the deploy to take longer than necessary. The script will wait up to 5 minutes (by default) for connections to drain from HAProxy between steps, but any long-lived TCP connections will cause old instances of HAProxy to stick around.
 
 An example minimal configuration for a [test instance of nginx is included here](tests/1-nginx.json). You might execute a deployment from a CI tool like Jenkins with:
 
 ```
-./bluegreen_deploy.py -j 1-nginx.json -m http://master.mesos:8080 -f -l http://marathon-lb.marathon.mesos:9090
+./bluegreen_deploy.py -j 1-nginx.json -m http://master.mesos:8080 -f -l http://marathon-lb.marathon.mesos:9090 --syslog-socket /dev/null
 ```
 
 Zero downtime deployments are accomplished through the use of a Lua module, which reports the number of HAProxy processes which are currently running by hitting the stats endpoint at the `/_haproxy_getpids`. After a restart, there will be multiple HAProxy PIDs until all remaining connections have gracefully terminated. By waiting for all connections to complete, you may safely and deterministically drain tasks. A caveat of this, however, is that if you have any long-lived connections on the same LB, HAProxy will continue to run and serve those connections until they complete, thereby breaking this technique.

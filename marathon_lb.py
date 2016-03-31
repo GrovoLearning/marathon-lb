@@ -48,7 +48,6 @@ from shutil import move
 from tempfile import mkstemp
 from textwrap import dedent
 from wsgiref.simple_server import make_server
-from sseclient import SSEClient
 from six.moves.urllib import parse
 from itertools import cycle
 from common import *
@@ -80,12 +79,35 @@ class ConfigTemplater(object):
       log /dev/log local1 notice
       maxconn 50000
       tune.ssl.default-dh-param 2048
-      ssl-default-bind-options no-sslv3 no-tls-tickets force-tlsv12
-      ssl-default-bind-ciphers AES128+EECDH:AES128+EDH
+      ssl-default-bind-ciphers ECDHE-ECDSA-CHACHA20-POLY1305:\
+ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:\
+ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:\
+ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:\
+DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:\
+ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:\
+ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:\
+DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:\
+DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:\
+EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:\
+AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS
+      ssl-default-bind-options no-sslv3 no-tls-tickets
+      ssl-default-server-ciphers ECDHE-ECDSA-CHACHA20-POLY1305:\
+ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:\
+ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:\
+ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:\
+DHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256:\
+ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES256-SHA384:ECDHE-RSA-AES128-SHA:\
+ECDHE-ECDSA-AES256-SHA384:ECDHE-ECDSA-AES256-SHA:ECDHE-RSA-AES256-SHA:\
+DHE-RSA-AES128-SHA256:DHE-RSA-AES128-SHA:DHE-RSA-AES256-SHA256:\
+DHE-RSA-AES256-SHA:ECDHE-ECDSA-DES-CBC3-SHA:ECDHE-RSA-DES-CBC3-SHA:\
+EDH-RSA-DES-CBC3-SHA:AES128-GCM-SHA256:AES256-GCM-SHA384:AES128-SHA256:\
+AES256-SHA256:AES128-SHA:AES256-SHA:DES-CBC3-SHA:!DSS
+      ssl-default-server-options no-sslv3 no-tls-tickets
       stats socket /var/run/haproxy/socket
       server-state-file global
       server-state-base /var/state/haproxy/
       lua-load /marathon-lb/getpids.lua
+      lua-load /marathon-lb/getconfig.lua
     defaults
       load-server-state-from-file global
       log               global
@@ -111,6 +133,8 @@ class ConfigTemplater(object):
       monitor-uri /_haproxy_health_check
       acl getpid path /_haproxy_getpids
       http-request use-service lua.getpids if getpid
+      acl getconfig path /_haproxy_getconfig
+      http-request use-service lua.getconfig if getconfig
     ''')
 
     HAPROXY_HTTP_FRONTEND_HEAD = dedent('''
@@ -154,6 +178,10 @@ class ConfigTemplater(object):
     HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS_WITH_PATH = '''\
   redirect scheme https code 301 if !{{ ssl_fc }} host_{cleanedUpHostname}\
  path_{backend}
+'''
+
+    HAPROXY_BACKEND_HSTS_OPTIONS = '''\
+  rspadd  Strict-Transport-Security:\ max-age=15768000
 '''
 
     HAPROXY_HTTP_FRONTEND_ACL = '''\
@@ -250,6 +278,7 @@ class ConfigTemplater(object):
             'HAPROXY_FRONTEND_HEAD',
             'HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS',
             'HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS_WITH_PATH',
+            'HAPROXY_BACKEND_HSTS_OPTIONS',
             'HAPROXY_BACKEND_HEAD',
             'HAPROXY_HTTP_FRONTEND_ACL',
             'HAPROXY_HTTP_FRONTEND_ACL_ONLY',
@@ -320,6 +349,11 @@ class ConfigTemplater(object):
             return app.\
                 labels['HAPROXY_{0}_BACKEND_REDIRECT_HTTP_TO_HTTPS_WITH_PATH']
         return self.HAPROXY_BACKEND_REDIRECT_HTTP_TO_HTTPS_WITH_PATH
+
+    def haproxy_backend_hsts_options(self, app):
+        if 'HAPROXY_{0}_BACKEND_HSTS_OPTIONS' in app.labels:
+            return app.labels['HAPROXY_{0}_BACKEND_HSTS_OPTIONS']
+        return self.HAPROXY_BACKEND_HSTS_OPTIONS
 
     def haproxy_backend_head(self, app):
         if 'HAPROXY_{0}_BACKEND_HEAD' in app.labels:
@@ -453,6 +487,10 @@ def set_redirect_http_to_https(x, k, v):
     x.redirectHttpToHttps = string_to_bool(v)
 
 
+def set_use_hsts(x, k, v):
+    x.useHsts = string_to_bool(v)
+
+
 def set_sslCert(x, k, v):
     x.sslCert = v
 
@@ -491,6 +529,7 @@ label_keys = {
     'HAPROXY_{0}_PATH': set_path,
     'HAPROXY_{0}_STICKY': set_sticky,
     'HAPROXY_{0}_REDIRECT_TO_HTTPS': set_redirect_http_to_https,
+    'HAPROXY_{0}_USE_HSTS': set_use_hsts,
     'HAPROXY_{0}_SSL_CERT': set_sslCert,
     'HAPROXY_{0}_BIND_OPTIONS': set_bindOptions,
     'HAPROXY_{0}_BIND_ADDR': set_bindAddr,
@@ -504,6 +543,7 @@ label_keys = {
     'HAPROXY_{0}_HTTPS_FRONTEND_ACL': set_label,
     'HAPROXY_{0}_HTTP_FRONTEND_APPID_ACL': set_label,
     'HAPROXY_{0}_BACKEND_HTTP_OPTIONS': set_label,
+    'HAPROXY_{0}_BACKEND_HSTS_OPTIONS': set_label,
     'HAPROXY_{0}_BACKEND_TCP_HEALTHCHECK_OPTIONS': set_label,
     'HAPROXY_{0}_BACKEND_HTTP_HEALTHCHECK_OPTIONS': set_label,
     'HAPROXY_{0}_BACKEND_STICKY_OPTIONS': set_label,
@@ -541,6 +581,7 @@ class MarathonService(object):
         self.path = None
         self.sticky = False
         self.redirectHttpToHttps = False
+        self.useHsts = False
         self.sslCert = None
         self.bindOptions = None
         self.bindAddr = '*'
@@ -657,8 +698,27 @@ class Marathon(object):
     def get_event_stream(self):
         url = self.host+"/v2/events"
         logger.info(
-            "SSE Active, trying fetch events from from {0}".format(url))
-        return SSEClient(url, auth=self.__auth)
+            "SSE Active, trying fetch events from {0}".format(url))
+
+        headers = {
+            'Cache-Control': 'no-cache',
+            'Accept': 'text/event-stream'
+        }
+
+        resp = requests.get(url, stream=True,
+                            headers=headers, auth=self.__auth)
+
+        class Event(object):
+            def __init__(self, data):
+                self.data = data
+
+        for line in resp.iter_lines():
+            if line.strip() != '':
+                for real_event_data in re.split(r'\r\n',
+                                                line.decode('utf-8')):
+                    if real_event_data[:6] == "data: ":
+                        event = Event(data=real_event_data[6:])
+                        yield event
 
     @property
     def host(self):
@@ -783,6 +843,8 @@ def config(apps, groups, bind_http_https, ssl_certs, templater):
             )
 
         if app.mode == 'http':
+            if app.useHsts:
+                backends += templater.haproxy_backend_hsts_options(app)
             backends += templater.haproxy_backend_http_options(app)
 
         if app.healthCheck:
@@ -964,7 +1026,8 @@ def generateHttpVhostAcl(templater, app, backend):
         logger.debug(
             "vhost label specifies multiple hosts: %s", app.hostname)
         vhosts = app.hostname.split(',')
-        acl_name = re.sub(r'[^a-zA-Z0-9\-]', '_', vhosts[0])
+        acl_name = re.sub(r'[^a-zA-Z0-9\-]', '_', vhosts[0]) + \
+            '_' + app.appId[1:].replace('/', '_')
 
         if app.path:
             # Set the path ACL if it exists
@@ -1049,7 +1112,8 @@ def generateHttpVhostAcl(templater, app, backend):
         # A single hostname in the VHOST label
         logger.debug(
             "adding virtual host for app with hostname %s", app.hostname)
-        acl_name = re.sub(r'[^a-zA-Z0-9\-]', '_', app.hostname)
+        acl_name = re.sub(r'[^a-zA-Z0-9\-]', '_', app.hostname) + \
+            '_' + app.appId[1:].replace('/', '_')
 
         if app.path:
             if app.redirectHttpToHttps:
@@ -1633,10 +1697,10 @@ if __name__ == '__main__':
                                    args.ssl_certs)
             except:
                 logger.exception("Caught exception")
-                logger.error("Reconnecting...")
                 backoff = backoff * 1.5
                 if backoff > 300:
                     backoff = 300
+                logger.error("Reconnecting in {}s...", backoff)
             # Reset the backoff if it's been more than 10 minutes
             if time.time() - stream_started > 600:
                 backoff = 3
