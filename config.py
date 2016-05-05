@@ -162,6 +162,15 @@ include your certificate.
 '''))
 
         self.add_template(
+            ConfigTemplate(name='HTTPS_FRONTEND_FOOTER',
+                           value='''
+''',
+                           overridable=False,
+                           description='''\
+An HTTPS frontend footer (for custom template based configuration)
+'''))
+
+        self.add_template(
             ConfigTemplate(name='FRONTEND_HEAD',
                            value='''
 frontend {backend}
@@ -774,6 +783,10 @@ Specified as {specifiedAs}.
     @property
     def haproxy_https_frontend_head(self):
         return self.t['HTTPS_FRONTEND_HEAD'].value
+
+    @property
+    def haproxy_https_frontend_footer(self):
+        return self.t['HTTPS_FRONTEND_FOOTER'].value
 
     def haproxy_userlist_head(self, app):
         if 'HAPROXY_{0}_USERLIST_HEAD' in app.labels:

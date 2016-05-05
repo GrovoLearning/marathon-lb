@@ -512,6 +512,9 @@ def config(apps, groups, bind_http_https, ssl_certs, templater):
         http_frontends += templater.haproxy_http_frontend_footer
 
     if bind_http_https:
+        https_frontends += templater.haproxy_https_frontend_footer
+
+    if bind_http_https:
         config += http_frontends
     config += http_appid_frontends
     if bind_http_https:
