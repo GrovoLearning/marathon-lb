@@ -119,6 +119,15 @@ all virtual hosts as defined by the `HAPROXY_{n}_VHOST` label.
 '''))
 
         self.add_template(
+            ConfigTemplate(name='HTTP_FRONTEND_FOOTER',
+                           value='''
+''',
+                           overridable=False,
+                           description='''\
+An HTTP frontend footer (for custom template based configuration)
+'''))
+
+        self.add_template(
             ConfigTemplate(name='HTTP_FRONTEND_APPID_HEAD',
                            value='''
 frontend marathon_http_appid_in
@@ -753,6 +762,10 @@ Specified as {specifiedAs}.
     @property
     def haproxy_http_frontend_head(self):
         return self.t['HTTP_FRONTEND_HEAD'].value
+
+    @property
+    def haproxy_http_frontend_footer(self):
+        return self.t['HTTP_FRONTEND_FOOTER'].value
 
     @property
     def haproxy_http_frontend_appid_head(self):
