@@ -1108,6 +1108,8 @@ def get_apps(marathon):
                 continue
 
             draining = task.get('draining', False)
+            if draining:
+                logger.info("Draining connections")
 
             # if different versions of app have different number of ports,
             # try to match as many ports as possible
